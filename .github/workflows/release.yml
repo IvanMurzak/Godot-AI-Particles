@@ -63,19 +63,32 @@ jobs:
     if: needs.check-version-tag.outputs.tag_exists == 'false'
     permissions:
       contents: write   # create the GitHub Release + tag
+    # OWNER-GATED PUBLISH. Every publishing step is guarded on the presence of the NUGET_API_KEY secret, so
+    # without it the job cleanly NO-OPs (green, nothing pushed or tagged) — the supply-chain gate. Once the
+    # owner runs `gh secret set NUGET_API_KEY`, the same version-bumped push to main publishes the source-only
+    # package and cuts the atomic GitHub Release.
+    env:
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
     steps:
+      - name: Owner-gated publish notice
+        if: ${{ env.NUGET_API_KEY == '' }}
+        run: echo "::notice::NUGET_API_KEY not set — skipping publish (owner-gated supply-chain step). Set the secret to enable release publishing."
+
       - uses: actions/checkout@v6
+        if: ${{ env.NUGET_API_KEY != '' }}
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Setup .NET
+        if: ${{ env.NUGET_API_KEY != '' }}
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
 
       - name: Pack source-only nupkg at the release version
         id: pack
+        if: ${{ env.NUGET_API_KEY != '' }}
         run: |
           set -e
           version="${{ needs.check-version-tag.outputs.version }}"
@@ -84,6 +97,7 @@ jobs:
           echo "nupkg=$(ls dist/*.nupkg | head -1)" >> "$GITHUB_OUTPUT"
 
       - name: Generate release notes
+        if: ${{ env.NUGET_API_KEY != '' }}
         run: |
           set -e
           version="${{ needs.check-version-tag.outputs.version }}"
@@ -100,13 +114,15 @@ jobs:
 
       # Publish to NuGet, then create the GitHub Release in the SAME job so both are gated on every test.
       - name: Publish source-only package to NuGet
+        if: ${{ env.NUGET_API_KEY != '' }}
         run: |
           dotnet nuget push "${{ steps.pack.outputs.nupkg }}" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --api-key "$NUGET_API_KEY" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
 
       - name: Atomic GitHub Release (tag + nupkg + notes)
+        if: ${{ env.NUGET_API_KEY != '' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.check-version-tag.outputs.version }}
