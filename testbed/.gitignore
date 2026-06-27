@@ -1,0 +1,6 @@
+# Godot + .NET regenerate these; the addon is installed by CI (godot-cli install-plugin).
+.godot/
+[Bb]in/
+[Oo]bj/
+addons/
+*.uid

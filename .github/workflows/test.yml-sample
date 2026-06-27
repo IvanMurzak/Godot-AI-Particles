@@ -1,0 +1,144 @@
+# Reusable test workflow for a Godot-MCP extension. Activated by `init` (test.yml-sample -> test.yml).
+# Called by test-pull-request.yml (per Godot version) and release.yml (full gate).
+#
+# Two legs:
+#   1. package-and-consume  — PROVEN-deterministic, NO Godot binary: build the source-only package,
+#      run the pure-managed unit tests, `dotnet pack`, then build the testbed CONSUMING the local
+#      package. This validates the whole source-injection recipe (props -> <Compile> -> compiles
+#      against the consumer's GodotSharp) using only `dotnet` + Godot.NET.Sdk from NuGet.
+#   2. e2e-godot           — full live E2E: boot a real HEADLESS Godot, install the core godot_mcp
+#      addon, build the solution, connect to a local MCP server, and call each tool via
+#      `godot-cli run-tool` / `run-system-tool`. This is the leg that needs a live editor + server;
+#      finish wiring the local server per the Godot-MCP testbed runbook before relying on it.
+name: test
+
+on:
+  workflow_call:
+    inputs:
+      godot-version:
+        description: "Godot editor version for the E2E leg (e.g. 4.5.1)"
+        required: true
+        type: string
+      godot-sdk-version:
+        description: "Godot.NET.Sdk/GodotSharp version the testbed compiles against (e.g. 4.5.1)"
+        required: true
+        type: string
+
+jobs:
+  package-and-consume:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Locate projects
+        id: paths
+        run: |
+          set -e
+          pkg=$(find src -name '*.csproj' -exec grep -l '<PackageId>' {} \; | head -1)
+          tests=$(find tests -name '*.csproj' | head -1)
+          testbed=$(find testbed -name '*.csproj' | head -1)
+          echo "pkg=$pkg"         >> "$GITHUB_OUTPUT"
+          echo "tests=$tests"     >> "$GITHUB_OUTPUT"
+          echo "testbed=$testbed" >> "$GITHUB_OUTPUT"
+
+      - name: Build package (source-only, headless)
+        run: dotnet build "${{ steps.paths.outputs.pkg }}" -c Debug
+
+      - name: Unit tests (pure-managed, xUnit)
+        run: dotnet test "${{ steps.paths.outputs.tests }}" -c Debug
+
+      - name: Pack source-only nupkg (Version=0.0.0-ci) into local feed
+        run: dotnet pack "${{ steps.paths.outputs.pkg }}" -c Release -p:Version=0.0.0-ci -o local-nuget
+
+      - name: Assert nupkg is source-only and declares NO GodotSharp dependency
+        run: |
+          set -e
+          nupkg=$(ls local-nuget/*.nupkg | head -1)
+          unzip -o "$nupkg" -d _pkg > /dev/null
+          # No compiled lib/ assembly:
+          if find _pkg -path '*/lib/*' -name '*.dll' | grep -q .; then
+            echo "::error::package contains a lib/*.dll — it must be source-only"; exit 1
+          fi
+          nuspec=$(find _pkg -name '*.nuspec' | head -1)
+          if grep -qiE 'id="GodotSharp"|id="Godot.SourceGenerators"' "$nuspec"; then
+            echo "::error::package declares a GodotSharp/SourceGenerators dependency — must be PrivateAssets=all"; exit 1
+          fi
+          grep -q 'id="com.IvanMurzak.McpPlugin"'   "$nuspec" || { echo "::error::missing McpPlugin dep";   exit 1; }
+          grep -q 'id="com.IvanMurzak.ReflectorNet"' "$nuspec" || { echo "::error::missing ReflectorNet dep"; exit 1; }
+          echo "OK: source-only, only MCP/reflection deps."
+
+      - name: Align testbed Godot.NET.Sdk to the matrix version
+        run: |
+          sed -i 's#Godot.NET.Sdk/[0-9][0-9.]*#Godot.NET.Sdk/${{ inputs.godot-sdk-version }}#' "${{ steps.paths.outputs.testbed }}"
+
+      - name: Build testbed CONSUMING the local source-only package (injection proof)
+        # Emulates `godot --build-solutions`: the props injects the package's .cs into the testbed,
+        # which compiles them against the testbed's own GodotSharp. Green here == the recipe works.
+        run: dotnet build "${{ steps.paths.outputs.testbed }}" -c Debug
+
+  e2e-godot:
+    runs-on: ubuntu-latest
+    needs: [package-and-consume]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Setup Godot (mono / .NET)
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ inputs.godot-version }}
+          use-dotnet: true
+
+      - name: Setup Node (for godot-cli)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Pack the extension into a local feed (0.0.0-ci)
+        run: |
+          pkg=$(find src -name '*.csproj' -exec grep -l '<PackageId>' {} \; | head -1)
+          dotnet pack "$pkg" -c Release -p:Version=0.0.0-ci -o local-nuget
+
+      - name: Install the core godot_mcp addon into the testbed
+        # The extension's tools are auto-discovered only with the core addon present. install-plugin
+        # downloads the addon from the Godot-MCP release and enables it.
+        run: npx --yes godot-cli@latest install-plugin testbed
+
+      - name: Align testbed Godot.NET.Sdk + build solutions (headless)
+        run: |
+          testbed=$(find testbed -name '*.csproj' | head -1)
+          sed -i 's#Godot.NET.Sdk/[0-9][0-9.]*#Godot.NET.Sdk/${{ inputs.godot-sdk-version }}#' "$testbed"
+          godot --headless --path testbed --build-solutions --quit
+
+      # ----------------------------------------------------------------------------------------------
+      # LIVE-SERVER E2E (finish wiring before relying on it — needs a reachable MCP server the editor
+      # connects to). Follow the Godot-MCP testbed runbook (Godot-MCP/CLAUDE.md § "Testbed runbook"):
+      #   1. Start a local MCP server (authorization=none) on a port, e.g. the shared gamedev-mcp-server
+      #      release binary or MCP-Plugin-dotnet/DemoWebApp.
+      #   2. export GODOT_MCP_CONNECTION_MODE=Custom GODOT_MCP_HOST=http://localhost:<port>
+      #   3. Boot the editor headless so the plugin connects and holds the connection:
+      #        godot --headless --path testbed --editor --quit-after 600000 &
+      #   4. Wait for ready, then call each tool and assert:
+      #        npx godot-cli wait-for-ready --url http://localhost:<port>
+      #        npx godot-cli run-tool YOUR_TOOL_PREFIX-echo --url http://localhost:<port> \
+      #            --input '{"message":"ci"}' --raw            # expect: ci
+      #        npx godot-cli run-tool YOUR_TOOL_PREFIX-editor-info --url http://localhost:<port> --raw
+      # ----------------------------------------------------------------------------------------------
+      - name: E2E — call each tool via godot-cli (one assertion per tool)
+        # NOTE: non-failing placeholder so activating CI does not break PRs before the live server is
+        # wired. The deterministic `package-and-consume` leg + the headless `--build-solutions` above are
+        # the real gate. Replace the body below with the run-tool assertions (see the block above), then
+        # remove this notice so a regression in a tool actually fails the build.
+        run: |
+          echo "::warning::E2E run-tool assertions are not wired yet — finish the LIVE-SERVER E2E block"
+          echo "(start a local MCP server + boot the editor connected, then godot-cli run-tool each tool)."
+          echo "The package + injection + real headless build are already validated above."
