@@ -1,0 +1,74 @@
+src/Godot-AI-Particles/Runtime/Tools/Tool_Particles.cs
+  s_e3cea916442b5e::t_b391ebfb649a16 1-43
+src/Godot-AI-Particles/Editor/Tools/Tool_Particles.SetEmitting.cs
+  s_e3cea916442b5e::t_3c1c6c27dc4f7b 1-54
+tests/Godot-AI-Particles.Tests/Tool_Particles_DefaultsTests.cs
+  s_e3cea916442b5e::t_fa7be3394a63ff 1-61
+src/Godot-AI-Particles/Runtime/Tools/Tool_Particles.Defaults.cs
+  s_e3cea916442b5e::t_fef00f858cf53b 1-47
+tests/Godot-AI-Particles.Tests/Godot-AI-Particles.Tests.csproj
+  s_e3cea916442b5e::t_c126d7e25f1130 39-43
+  s_e3cea916442b5e::t_80f5f37db96b4e 38
+  s_0bfcb45c92a7c5::t_9b9b48b7ca055d 4,19-20
+CLAUDE.md
+  s_e3cea916442b5e::t_b54c32f10b2d56 1,3-7,9,11-25,27-33,38-41,46-49,53-60
+tests/Godot-AI-Particles.Tests/ParticlesDimensionTests.cs
+  s_e3cea916442b5e::t_3810abfc02aaa9 1-63
+src/Godot-AI-Particles/README.md
+  s_e3cea916442b5e::t_d3fb0200e38a6e 1-38
+src/Godot-AI-Particles/Runtime/Tools/Tool_Particles.Ids.cs
+  s_e3cea916442b5e::t_52b7f9bf2b3bd4 1-34
+src/Godot-AI-Particles/Runtime/Particles/ParticlesDefaults.cs
+  s_e3cea916442b5e::t_0d49c4710611e3 1-85
+src/Godot-AI-Particles/Runtime/Particles/ParticlesNodeInfo.cs
+  s_e3cea916442b5e::t_22d1f321d3af1b 1-63
+src/Godot-AI-Particles/Editor/Tools/Tool_Particles.Create.cs
+  s_e3cea916442b5e::t_919c50f87fd061 1-86
+src/Godot-AI-Particles/Editor/Tools/Tool_Particles.Configure.cs
+  s_e3cea916442b5e::t_554fd6623ecb7a 1-13,15-68
+  s_e3cea916442b5e::t_562875038d4f7b 14
+README.md
+  s_e3cea916442b5e::t_be9a92573a3523 1,4,8-13,15,17-23,25-27,29,31,33-36,38,40,45,47-48,51-54,56,60-66
+.github/workflows/test.yml
+  s_e3cea916442b5e::t_7195c9ae8d8345 130-144
+src/Godot-AI-Particles/Editor/Tools/Tool_Particles.Editor.cs
+  s_e3cea916442b5e::t_0d5b1dff8fdb78 1-153
+src/Godot-AI-Particles/Runtime/Particles/ParticlesDimension.cs
+  s_e3cea916442b5e::t_efb3abb981c0e7 1-79
+tests/Godot-AI-Particles.Tests/ParticlesDefaultsTests.cs
+  s_e3cea916442b5e::t_fd6442da48ab79 1-95
+src/Godot-AI-Particles/Editor/Tools/Tool_Particles.Get.cs
+  s_e3cea916442b5e::t_cf6b5e7e2b7f32 1-44
+src/Godot-AI-Particles/Godot-AI-Particles.csproj
+  s_e3cea916442b5e::t_6cb60359f2236e 30-31,35,37,39,43-44,97
+src/Godot-AI-Particles/build/com.IvanMurzak.Godot.MCP.Particles.props
+  s_e3cea916442b5e::t_3a58eee90b66fc 8,26
+testbed/Particles-Testbed.csproj
+  s_e3cea916442b5e::t_05f57c8c7f6db3 2,5,21,29
+testbed/project.godot
+  s_e3cea916442b5e::t_fd45b1deee2aae 2,11-12,17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "a44175266879204aba528fc415de0fa95709b38c",
+  "prompts": {},
+  "sessions": {
+    "s_0bfcb45c92a7c5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a4892fa7fba7fef8d",
+        "model": "unknown"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    },
+    "s_e3cea916442b5e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c575ab56-73e6-4952-bb8b-fef415924e27",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
