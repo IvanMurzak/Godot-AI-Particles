@@ -127,11 +127,21 @@ jobs:
       #   2. export GODOT_MCP_CONNECTION_MODE=Custom GODOT_MCP_HOST=http://localhost:<port>
       #   3. Boot the editor headless so the plugin connects and holds the connection:
       #        godot --headless --path testbed --editor --quit-after 600000 &
-      #   4. Wait for ready, then call each tool and assert:
+      #   4. Open (or create) a scene in the editor so the editor tools have an edited scene root, then
+      #      wait for ready and call each tool, asserting success (one assertion per tool):
       #        npx godot-cli wait-for-ready --url http://localhost:<port>
-      #        npx godot-cli run-tool YOUR_TOOL_PREFIX-echo --url http://localhost:<port> \
-      #            --input '{"message":"ci"}' --raw            # expect: ci
-      #        npx godot-cli run-tool YOUR_TOOL_PREFIX-editor-info --url http://localhost:<port> --raw
+      #        # pure-managed (no scene needed):
+      #        npx godot-cli run-tool particles-defaults --url http://localhost:<port> \
+      #            --input '{"dimension":"3D"}' --raw                 # expect: amount 16, dimension 3D
+      #        # editor tools (need an edited scene; particles-create returns the new node path):
+      #        npx godot-cli run-tool particles-create --url http://localhost:<port> \
+      #            --input '{"dimension":"3D","name":"FX","amount":32,"lifetime":2.0}' --raw
+      #        npx godot-cli run-tool particles-get --url http://localhost:<port> \
+      #            --input '{"nodePath":"FX"}' --raw                  # expect: amount 32
+      #        npx godot-cli run-tool particles-configure --url http://localhost:<port> \
+      #            --input '{"nodePath":"FX","amount":0,"explosiveness":2.0}' --raw   # expect: clamped amount 1, explosiveness 1
+      #        npx godot-cli run-tool particles-set-emitting --url http://localhost:<port> \
+      #            --input '{"nodePath":"FX","emitting":false,"restart":true}' --raw  # expect: emitting false
       # ----------------------------------------------------------------------------------------------
       - name: E2E — call each tool via godot-cli (one assertion per tool)
         # NOTE: non-failing placeholder so activating CI does not break PRs before the live server is
