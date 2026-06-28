@@ -4,3 +4,6 @@
 [Oo]bj/
 addons/
 *.uid
+# install-plugin drops MCP skill stubs here; the live run-tool E2E creates scenes via scene-create.
+.claude/
+*.tscn
