@@ -84,15 +84,16 @@ jobs:
   e2e-godot:
     runs-on: ubuntu-latest
     needs: [package-and-consume]
-    # NON-BLOCKING. The deterministic `package-and-consume` leg above is the authoritative gate: it proves
-    # the source-injection recipe (props -> <Compile> -> compiles into the consumer against the consumer's
-    # own GodotSharp) headlessly with `dotnet` + Godot.NET.Sdk. This live leg additionally boots a REAL
-    # headless Godot with the core `godot_mcp` addon enabled; that boot currently SIGSEGVs (exit 139) during
-    # `--build-solutions` on the CI runners across every Godot 4.x version — a core-addon headless-boot issue,
-    # not an extension or recipe defect (the deterministic leg compiles the same source clean). Kept running
-    # for visibility but `continue-on-error` so it does not block PRs/releases until the headless-boot crash
-    # is diagnosed and the live MCP-server `run-tool` assertions are wired (see the block at the bottom).
-    continue-on-error: true
+    # REAL GATE. Boots a live HEADLESS Godot with the core `godot_mcp` addon + this extension enabled and
+    # asserts a clean editor boot. The build uses the SAFE three-process pattern (import -> `dotnet build`
+    # -> `--editor --quit`) that Godot-MCP's own test_godot_plugin.yml uses, NOT cold
+    # `--build-solutions --quit`. The cold single-process `--build-solutions` path SIGSEGVs (exit 139) on
+    # the CI runners across every Godot 4.x version — that is an UPSTREAM godotengine/godot engine bug
+    # (any first C# [Tool] EditorPlugin instantiation crashes there before managed code runs;
+    # matches godot #81790 / #100805), NOT an extension or core-addon defect. Splitting the compile out to
+    # `dotnet build` (Godot.NET.Sdk resolves GodotSharp from NuGet, deterministic) and booting the editor
+    # in a SEPARATE process sidesteps the engine crash. The live MCP-server `run-tool` assertions remain a
+    # SEPARATE pre-existing TODO (see the non-failing placeholder + block at the bottom).
     steps:
       - uses: actions/checkout@v6
 
@@ -122,11 +123,74 @@ jobs:
         # downloads the addon from the Godot-MCP release and enables it.
         run: npx --yes godot-cli@latest install-plugin testbed
 
-      - name: Align testbed Godot.NET.Sdk + build solutions (headless)
+      - name: Align testbed Godot.NET.Sdk to the matrix version
         run: |
+          set -euo pipefail
           testbed=$(find testbed -name '*.csproj' | head -1)
           sed -i 's#Godot.NET.Sdk/[0-9][0-9.]*#Godot.NET.Sdk/${{ inputs.godot-sdk-version }}#' "$testbed"
-          godot --headless --path testbed --build-solutions --quit
+          echo "TESTBED=$testbed" >> "$GITHUB_ENV"
+          echo "TESTBED_ASM=$(basename "$testbed" .csproj)" >> "$GITHUB_ENV"
+
+      - name: Import the testbed (generate .godot layout)
+        run: |
+          set -uo pipefail
+          # SAFE PATTERN, step 1/3 (mirrors Godot-MCP/.github/workflows/test_godot_plugin.yml).
+          # A cold CI checkout has no .godot/. `godot --build-solutions` is a silent no-op until the
+          # project has been imported once, AND the cold single-process `--build-solutions` path
+          # SIGSEGVs (exit 139) on a first C# [Tool] EditorPlugin — an UPSTREAM godot engine bug
+          # (godot #81790 / #100805), not an addon/extension defect. So we DON'T use `--build-solutions`
+          # at all. First, run an import pass to materialize the .godot/mono layout. Headless import
+          # prints benign "progress dialog while flushing the message queue" warnings and may exit
+          # non-zero on teardown — neither is fatal, so do NOT gate on the import's exit code (the real
+          # gates are the emitted DLL in the next step + the plugin-loaded assertion after).
+          godot --headless --path testbed --import --quit 2>&1 | tee import.log || true
+          echo "Import pass complete."
+
+      - name: Build C# (addon + extension compile into the testbed assembly)
+        run: |
+          set -euo pipefail
+          # SAFE PATTERN, step 2/3. Compile via `dotnet build` directly on the testbed .csproj rather
+          # than `godot --build-solutions` — the latter silently no-ops in a headless cold checkout AND
+          # crashes the engine (see above). `dotnet build` is deterministic: Godot.NET.Sdk resolves
+          # GodotSharp from nuget.org for the pinned SDK, and the source-only extension package's *.cs
+          # (injected via its build props) globs into THIS testbed assembly, so a successful build proves
+          # the extension's C# compiles against the consumer's own GodotSharp + the frozen MCP pins.
+          dotnet build "$TESTBED" -c Debug 2>&1 | tee build.log
+          if ! ls testbed/.godot/mono/temp/bin/*/"$TESTBED_ASM".dll >/dev/null 2>&1; then
+            echo "::error::C# build did not produce $TESTBED_ASM.dll — the testbed/extension failed to compile."
+            echo "----- build.log -----"; cat build.log || true
+            exit 1
+          fi
+
+      - name: Boot editor headless and assert the addon loads
+        run: |
+          set -euo pipefail
+          # SAFE PATTERN, step 3/3. Boot the editor in a SEPARATE process; the godot_mcp EditorPlugin
+          # runs its _EnterTree and prints "[Godot-MCP] plugin loaded". This separate-process boot does
+          # NOT hit the cold `--build-solutions` engine crash.
+          godot --headless --path testbed --editor --quit 2>&1 | tee editor-boot.log || true
+          echo "----- editor-boot.log -----"; cat editor-boot.log
+          if ! grep -qF "[Godot-MCP] plugin loaded" editor-boot.log; then
+            echo "::error::'[Godot-MCP] plugin loaded' was NOT found — the addon did not load on Godot ${{ inputs.godot-version }}."
+            exit 1
+          fi
+          if grep -qE "FileNotFoundException|Cannot open file|Failed to load script|Unable to load addon|addon .* failed" editor-boot.log; then
+            echo "::error::An addon-load / assembly-resolution error appeared in the editor boot output on Godot ${{ inputs.godot-version }}."
+            exit 1
+          fi
+          echo "Godot ${{ inputs.godot-version }}: addon + extension loaded cleanly."
+
+      - name: Upload e2e logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-godot-${{ inputs.godot-version }}-logs
+          path: |
+            import.log
+            build.log
+            editor-boot.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       # ----------------------------------------------------------------------------------------------
       # LIVE-SERVER E2E (finish wiring before relying on it — needs a reachable MCP server the editor
