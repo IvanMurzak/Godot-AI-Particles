@@ -2,10 +2,15 @@
 #
 # Gate: publishes ONLY when the package csproj <Version> increases AND a tag for it does not yet exist.
 # Flow: check-version -> full test suite (multi-Godot matrix, reusable test.yml) -> pack the source-only
-#       nupkg at the real version -> publish to NuGet -> atomic GitHub Release (tag + nupkg asset + notes).
+#       nupkg at the real version -> publish to NuGet (trusted publishing) -> atomic GitHub Release.
 #
-# Required repo secret:  NUGET_API_KEY  (nuget.org API key with push rights for com.IvanMurzak.Godot.MCP.*)
-#   gh secret set NUGET_API_KEY --repo <owner>/<repo>
+# Publishing uses NuGet Trusted Publishing (OIDC) via the official NuGet/login action — NO long-lived
+# NUGET_API_KEY is ever stored. The runner mints a short-lived token from a GitHub OIDC claim that the
+# nuget.org trusted-publishing policy validates. Owner one-time setup to enable publishing:
+#   1. Create a trusted-publishing policy on nuget.org (Account -> Trusted Publishing) bound to:
+#        repository owner = <owner>, repository = <repo>, workflow file = release.yml, environment = (none).
+#   2. gh variable set NUGET_USER --repo <owner>/<repo> --body <your-nuget.org-username>
+# Until the NUGET_USER repo variable is set, the publish job cleanly NO-OPs (green, nothing pushed/tagged).
 name: release
 
 on:
@@ -63,32 +68,34 @@ jobs:
     if: needs.check-version-tag.outputs.tag_exists == 'false'
     permissions:
       contents: write   # create the GitHub Release + tag
-    # OWNER-GATED PUBLISH. Every publishing step is guarded on the presence of the NUGET_API_KEY secret, so
-    # without it the job cleanly NO-OPs (green, nothing pushed or tagged) — the supply-chain gate. Once the
-    # owner runs `gh secret set NUGET_API_KEY`, the same version-bumped push to main publishes the source-only
-    # package and cuts the atomic GitHub Release.
-    env:
-      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+      id-token: write   # mint the OIDC token for NuGet trusted publishing (NuGet/login)
+    # OWNER-GATED PUBLISH (NuGet Trusted Publishing / OIDC — no long-lived API key). Every publishing step is
+    # guarded on the NUGET_USER repo variable, so without it the job cleanly NO-OPs (green, nothing pushed or
+    # tagged) — the supply-chain gate. Once the owner (1) creates a trusted-publishing policy on nuget.org for
+    # this repository + workflow file and (2) runs
+    #   gh variable set NUGET_USER --repo <owner>/<repo> --body <nuget.org-username>
+    # the same version-bumped push to main mints a short-lived OIDC token, publishes the source-only package,
+    # and cuts the atomic GitHub Release.
     steps:
       - name: Owner-gated publish notice
-        if: ${{ env.NUGET_API_KEY == '' }}
-        run: echo "::notice::NUGET_API_KEY not set — skipping publish (owner-gated supply-chain step). Set the secret to enable release publishing."
+        if: ${{ vars.NUGET_USER == '' }}
+        run: echo "::notice::NUGET_USER not set — skipping publish (owner-gated supply-chain step). Create a nuget.org trusted-publishing policy for this repo+workflow, then 'gh variable set NUGET_USER --body <nuget-username>' to enable release publishing."
 
       - uses: actions/checkout@v6
-        if: ${{ env.NUGET_API_KEY != '' }}
+        if: ${{ vars.NUGET_USER != '' }}
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Setup .NET
-        if: ${{ env.NUGET_API_KEY != '' }}
+        if: ${{ vars.NUGET_USER != '' }}
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
 
       - name: Pack source-only nupkg at the release version
         id: pack
-        if: ${{ env.NUGET_API_KEY != '' }}
+        if: ${{ vars.NUGET_USER != '' }}
         run: |
           set -e
           version="${{ needs.check-version-tag.outputs.version }}"
@@ -97,7 +104,7 @@ jobs:
           echo "nupkg=$(ls dist/*.nupkg | head -1)" >> "$GITHUB_OUTPUT"
 
       - name: Generate release notes
-        if: ${{ env.NUGET_API_KEY != '' }}
+        if: ${{ vars.NUGET_USER != '' }}
         run: |
           set -e
           version="${{ needs.check-version-tag.outputs.version }}"
@@ -112,17 +119,26 @@ jobs:
             fi
           } > release.md
 
-      # Publish to NuGet, then create the GitHub Release in the SAME job so both are gated on every test.
+      # Publish to NuGet via trusted publishing (OIDC), then create the GitHub Release in the SAME job so both
+      # are gated on every test. NuGet/login exchanges the GitHub OIDC token for a short-lived nuget.org API
+      # key (exposed as steps.nuget-login.outputs.NUGET_API_KEY) — nothing long-lived is stored in the repo.
+      - name: NuGet trusted-publishing login (OIDC)
+        id: nuget-login
+        if: ${{ vars.NUGET_USER != '' }}
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
       - name: Publish source-only package to NuGet
-        if: ${{ env.NUGET_API_KEY != '' }}
+        if: ${{ vars.NUGET_USER != '' }}
         run: |
           dotnet nuget push "${{ steps.pack.outputs.nupkg }}" \
-            --api-key "$NUGET_API_KEY" \
+            --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
 
       - name: Atomic GitHub Release (tag + nupkg + notes)
-        if: ${{ env.NUGET_API_KEY != '' }}
+        if: ${{ vars.NUGET_USER != '' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.check-version-tag.outputs.version }}
