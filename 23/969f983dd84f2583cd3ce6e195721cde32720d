@@ -1,0 +1,39 @@
+tests/e2e/run_tool_e2e.py
+  s_e3cea916442b5e::t_46b4796d410b36 45,50-63
+  s_e3cea916442b5e::t_c056818171f8b2 154
+  s_e3cea916442b5e::t_5c41799a31a575 1-44,46-49,64-153,155-179
+.github/workflows/test.yml
+  s_e3cea916442b5e::t_de7c213dc52b2b 10-13,88-90,96-110,130-132,141,200-307,317-318
+tests/e2e/e2e-tools.json
+  s_e3cea916442b5e::t_1cb2a03c8d891a 1-38
+.gitignore
+  s_e3cea916442b5e::t_c8ec4d8827d955 30-33
+docs/ci.md
+  s_e3cea916442b5e::t_9f642e4010a46e 8
+testbed/.gitignore
+  s_7bae07a42819fc::t_2a2989d866209f 7-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "23969f983dd84f2583cd3ce6e195721cde32720d",
+  "prompts": {},
+  "sessions": {
+    "s_7bae07a42819fc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aec200f07d4a2cb24",
+        "model": "unknown"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    },
+    "s_e3cea916442b5e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c575ab56-73e6-4952-bb8b-fef415924e27",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
