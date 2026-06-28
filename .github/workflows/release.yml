@@ -34,7 +34,7 @@ jobs:
         run: |
           set -e
           pkg=$(find src -name '*.csproj' -exec grep -l '<PackageId>' {} \; | head -1)
-          version=$(grep -oP '(?<=<Version>)[^<]+' "$pkg" | head -1)
+          version=$(grep -oP '<Version>\K[^<]+(?=</Version>)' "$pkg" | head -1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Package version: $version"
       - name: Check if tag exists

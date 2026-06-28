@@ -30,7 +30,7 @@
     <RootNamespace>com.IvanMurzak.Godot.MCP.Particles</RootNamespace>
     <AssemblyName>com.IvanMurzak.Godot.MCP.Particles</AssemblyName>
 
-    <!-- ===== Package identity (bump-version.ps1 / get-version.ps1 own <Version>) ===== -->
+    <!-- ===== Package identity (bump-version.ps1 / get-version.ps1 own the Version element) ===== -->
     <IsPackable>true</IsPackable>
     <PackageId>com.IvanMurzak.Godot.MCP.Particles</PackageId>
     <Version>0.1.0</Version>
