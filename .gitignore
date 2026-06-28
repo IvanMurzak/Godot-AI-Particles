@@ -27,3 +27,7 @@ Thumbs.db
 # env
 *.env
 .env
+
+# Python bytecode (the e2e run-tool driver)
+__pycache__/
+*.pyc

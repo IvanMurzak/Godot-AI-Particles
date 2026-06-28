@@ -7,9 +7,10 @@
 #      package. This validates the whole source-injection recipe (props -> <Compile> -> compiles
 #      against the consumer's GodotSharp) using only `dotnet` + Godot.NET.Sdk from NuGet.
 #   2. e2e-godot           — full live E2E: boot a real HEADLESS Godot, install the core godot_mcp
-#      addon, build the solution, connect to a local MCP server, and call each tool via
-#      `godot-cli run-tool` / `run-system-tool`. This is the leg that needs a live editor + server;
-#      finish wiring the local server per the Godot-MCP testbed runbook before relying on it.
+#      addon, build the solution, boot the editor CONNECTED to a local gamedev-mcp-server, and call
+#      each tool via `godot-cli run-tool` / `run-system-tool`, asserting success (one assertion per
+#      tool). The per-tool list is data-driven (tests/e2e/e2e-tools.json) and run by the generic
+#      driver tests/e2e/run_tool_e2e.py — a tool that throws turns this leg RED (no continue-on-error).
 name: test
 
 on:
@@ -84,16 +85,29 @@ jobs:
   e2e-godot:
     runs-on: ubuntu-latest
     needs: [package-and-consume]
-    # REAL GATE. Boots a live HEADLESS Godot with the core `godot_mcp` addon + this extension enabled and
-    # asserts a clean editor boot. The build uses the SAFE three-process pattern (import -> `dotnet build`
-    # -> `--editor --quit`) that Godot-MCP's own test_godot_plugin.yml uses, NOT cold
+    # REAL GATE. Boots a live HEADLESS Godot with the core `godot_mcp` addon + this extension enabled,
+    # then drives every tool over a LIVE MCP server. The build uses the SAFE three-process pattern
+    # (import -> `dotnet build` -> `--editor`) that Godot-MCP's own test_godot_plugin.yml uses, NOT cold
     # `--build-solutions --quit`. The cold single-process `--build-solutions` path SIGSEGVs (exit 139) on
     # the CI runners across every Godot 4.x version — that is an UPSTREAM godotengine/godot engine bug
     # (any first C# [Tool] EditorPlugin instantiation crashes there before managed code runs;
     # matches godot #81790 / #100805), NOT an extension or core-addon defect. Splitting the compile out to
     # `dotnet build` (Godot.NET.Sdk resolves GodotSharp from NuGet, deterministic) and booting the editor
-    # in a SEPARATE process sidesteps the engine crash. The live MCP-server `run-tool` assertions remain a
-    # SEPARATE pre-existing TODO (see the non-failing placeholder + block at the bottom).
+    # in a SEPARATE process sidesteps the engine crash.
+    #
+    # After the clean-boot assertion, the leg starts the shared gamedev-mcp-server (the EXACT release the
+    # installed addon pins, Authorization=none) and boots a SECOND headless editor in Custom connection
+    # mode so its `[AiTool]` handlers (incl. the `#if TOOLS` editor tools) are live. tests/e2e/run_tool_e2e.py
+    # then calls each tool in tests/e2e/e2e-tools.json via `godot-cli run-tool` and asserts success — a
+    # real per-tool gate (an exception comes back HTTP 500 -> godot-cli exits non-zero -> the leg fails).
+    env:
+      # Fixed loopback port the server listens on and the editor connects to (auth=none).
+      SERVER_PORT: "5300"
+      # ubuntu-latest is linux-x64, so the release asset is fixed. The binary filename inside the zip is
+      # stable (gamedev-mcp-server); its PATH is not (the release is a publish-per-RID layout nesting the
+      # payload under <rid>/), so the download step resolves the real path with `find`.
+      SERVER_ASSET: gamedev-mcp-server-linux-x64.zip
+      SERVER_BIN_NAME: gamedev-mcp-server
     steps:
       - uses: actions/checkout@v6
 
@@ -113,6 +127,9 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install godot-cli (install-plugin + run-tool/wait-for-ready)
+        run: npm install -g godot-cli@latest
+
       - name: Pack the extension into a local feed (0.0.0-ci)
         run: |
           pkg=$(find src -name '*.csproj' -exec grep -l '<PackageId>' {} \; | head -1)
@@ -121,7 +138,7 @@ jobs:
       - name: Install the core godot_mcp addon into the testbed
         # The extension's tools are auto-discovered only with the core addon present. install-plugin
         # downloads the addon from the Godot-MCP release and enables it.
-        run: npx --yes godot-cli@latest install-plugin testbed
+        run: godot-cli install-plugin testbed
 
       - name: Align testbed Godot.NET.Sdk to the matrix version
         run: |
@@ -180,6 +197,114 @@ jobs:
           fi
           echo "Godot ${{ inputs.godot-version }}: addon + extension loaded cleanly."
 
+      # ----------------------------------------------------------------------------------------------
+      # LIVE-SERVER run-tool E2E: start the gamedev-mcp-server, boot a CONNECTED headless editor, and
+      # assert every tool. Single-sourced + modeled on Godot-MCP/.github/workflows/test_godot_runtime_harness.yml.
+      # ----------------------------------------------------------------------------------------------
+      - name: Resolve the addon-pinned gamedev-mcp-server version
+        id: server-version
+        run: |
+          set -euo pipefail
+          # Single-source the server version from the addon install-plugin just laid into the testbed
+          # (GodotMcpServerView.ServerVersion), so the leg ALWAYS runs against the server release the
+          # installed addon actually pins — never a drifting hardcoded default.
+          src="testbed/addons/godot_mcp/Runtime/Connection/GodotMcpServerView.cs"
+          version="$(grep -oE 'ServerVersion[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' "$src" \
+            | head -n1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')"
+          if [ -z "${version}" ]; then
+            echo "::error::Could not read ServerVersion from ${src}"; exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Addon-pinned server version: ${version}"
+
+      - name: Download the released gamedev-mcp-server
+        id: server
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVER_VERSION: ${{ steps.server-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p server
+          # Pull the EXACT release asset the addon would fetch
+          # (https://github.com/IvanMurzak/GameDev-MCP-Server/releases/download/v<ver>/<asset>).
+          gh release download "v${SERVER_VERSION}" \
+            --repo IvanMurzak/GameDev-MCP-Server \
+            --pattern "${SERVER_ASSET}" \
+            --dir server --clobber
+          unzip -o -q "server/${SERVER_ASSET}" -d server/bin
+          # The release zip is a publish-per-RID layout: the binary lives under a <rid>/ subdir
+          # (server/bin/linux-x64/gamedev-mcp-server), NOT at the zip root. Resolve with `find` so a
+          # future flat-vs-nested layout change can't re-break this — the filename is the contract.
+          SERVER_BIN="$(find server/bin -type f -name "${SERVER_BIN_NAME}" | head -n1)"
+          if [ -z "${SERVER_BIN}" ]; then
+            echo "::error::could not locate '${SERVER_BIN_NAME}' under server/bin after extracting ${SERVER_ASSET}."
+            ls -laR server/bin || true; exit 1
+          fi
+          chmod +x "${SERVER_BIN}"
+          echo "resolved server binary: ${SERVER_BIN}"
+          echo "bin=${SERVER_BIN}" >> "$GITHUB_OUTPUT"
+
+      - name: Start the gamedev-mcp-server (Authorization=none, streamableHttp)
+        env:
+          SERVER_BIN: ${{ steps.server.outputs.bin }}
+        run: |
+          set -euo pipefail
+          test -x "${SERVER_BIN}"
+          # Same launch shape as the addon's GodotMcpServerView.BuildLaunchArguments.
+          nohup "${SERVER_BIN}" \
+            port="${SERVER_PORT}" \
+            plugin-timeout=10000 \
+            client-transport=streamableHttp \
+            authorization=none \
+            > server.log 2>&1 &
+          echo "$!" > server.pid
+          # Wait-for-ready: poll /help (200 when the HTTP host is up).
+          for i in $(seq 1 60); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${SERVER_PORT}/help" || true)"
+            if [ "$code" = "200" ]; then echo "server ready after ${i}s (/help -> 200)."; exit 0; fi
+            sleep 1
+          done
+          echo "::error::server did not become ready on port ${SERVER_PORT} within 60s."
+          echo "----- server.log -----"; cat server.log || true
+          exit 1
+
+      - name: Boot a headless editor CONNECTED to the server (held open)
+        run: |
+          set -euo pipefail
+          # Boot the editor in Custom connection mode so the plugin connects to the local server and
+          # holds the connection (NO --quit; it runs the editor main loop until we kill it). The addon
+          # reads host/mode/auth from its GODOT_MCP_* env contract.
+          GODOT_MCP_CONNECTION_MODE=Custom \
+          GODOT_MCP_HOST="http://localhost:${SERVER_PORT}" \
+          GODOT_MCP_AUTH_OPTION=None \
+            godot --headless --path testbed --editor > editor-connect.log 2>&1 &
+          echo "$!" > editor.pid
+          echo "editor booting (pid $(cat editor.pid)); waiting for the MCP connection..."
+
+      - name: Wait for the editor's MCP connection (ping roundtrip)
+        run: |
+          set -euo pipefail
+          # wait-for-ready polls <url>/api/tools/ping, which only returns 200 once the editor's plugin
+          # is connected + handshaken (an unconnected server returns 500 "Response data is null").
+          godot-cli wait-for-ready --url "http://localhost:${SERVER_PORT}" --timeout 120000 --interval 3000
+
+      - name: E2E — call each tool via godot-cli (one assertion per tool)
+        run: |
+          set -euo pipefail
+          # tests/e2e/e2e-tools.json is the per-extension tool list; tests/e2e/run_tool_e2e.py calls
+          # each via `godot-cli run-tool`, gating on exit-code 0 + a {"status":"success"} envelope +
+          # the per-call `expect` substrings. A regression in ANY tool fails this step (no continue-on-error).
+          python3 tests/e2e/run_tool_e2e.py \
+            --url "http://localhost:${SERVER_PORT}" \
+            --manifest tests/e2e/e2e-tools.json \
+            --cli-cmd godot-cli
+
+      - name: Stop the connected editor and server
+        if: always()
+        run: |
+          if [ -f editor.pid ]; then kill "$(cat editor.pid)" 2>/dev/null || true; fi
+          if [ -f server.pid ]; then kill "$(cat server.pid)" 2>/dev/null || true; fi
+
       - name: Upload e2e logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -189,39 +314,7 @@ jobs:
             import.log
             build.log
             editor-boot.log
+            editor-connect.log
+            server.log
           if-no-files-found: ignore
           retention-days: 7
-
-      # ----------------------------------------------------------------------------------------------
-      # LIVE-SERVER E2E (finish wiring before relying on it — needs a reachable MCP server the editor
-      # connects to). Follow the Godot-MCP testbed runbook (Godot-MCP/CLAUDE.md § "Testbed runbook"):
-      #   1. Start a local MCP server (authorization=none) on a port, e.g. the shared gamedev-mcp-server
-      #      release binary or MCP-Plugin-dotnet/DemoWebApp.
-      #   2. export GODOT_MCP_CONNECTION_MODE=Custom GODOT_MCP_HOST=http://localhost:<port>
-      #   3. Boot the editor headless so the plugin connects and holds the connection:
-      #        godot --headless --path testbed --editor --quit-after 600000 &
-      #   4. Open (or create) a scene in the editor so the editor tools have an edited scene root, then
-      #      wait for ready and call each tool, asserting success (one assertion per tool):
-      #        npx godot-cli wait-for-ready --url http://localhost:<port>
-      #        # pure-managed (no scene needed):
-      #        npx godot-cli run-tool particles-defaults --url http://localhost:<port> \
-      #            --input '{"dimension":"3D"}' --raw                 # expect: amount 16, dimension 3D
-      #        # editor tools (need an edited scene; particles-create returns the new node path):
-      #        npx godot-cli run-tool particles-create --url http://localhost:<port> \
-      #            --input '{"dimension":"3D","name":"FX","amount":32,"lifetime":2.0}' --raw
-      #        npx godot-cli run-tool particles-get --url http://localhost:<port> \
-      #            --input '{"nodePath":"FX"}' --raw                  # expect: amount 32
-      #        npx godot-cli run-tool particles-configure --url http://localhost:<port> \
-      #            --input '{"nodePath":"FX","amount":0,"explosiveness":2.0}' --raw   # expect: clamped amount 1, explosiveness 1
-      #        npx godot-cli run-tool particles-set-emitting --url http://localhost:<port> \
-      #            --input '{"nodePath":"FX","emitting":false,"restart":true}' --raw  # expect: emitting false
-      # ----------------------------------------------------------------------------------------------
-      - name: E2E — call each tool via godot-cli (one assertion per tool)
-        # NOTE: non-failing placeholder so activating CI does not break PRs before the live server is
-        # wired. The deterministic `package-and-consume` leg + the headless `--build-solutions` above are
-        # the real gate. Replace the body below with the run-tool assertions (see the block above), then
-        # remove this notice so a regression in a tool actually fails the build.
-        run: |
-          echo "::warning::E2E run-tool assertions are not wired yet — finish the LIVE-SERVER E2E block"
-          echo "(start a local MCP server + boot the editor connected, then godot-cli run-tool each tool)."
-          echo "The package + injection + real headless build are already validated above."
