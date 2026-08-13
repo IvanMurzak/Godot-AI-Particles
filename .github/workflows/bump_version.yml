@@ -147,17 +147,20 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Push to ${{ github.ref_name }}
+        env:
+          TARGET_REF: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          git push origin "HEAD:${{ github.ref_name }}"
+          git push origin "HEAD:$TARGET_REF"
 
       # This push created no run (GITHUB_TOKEN), so start the release explicitly.
       - name: Dispatch release.yml
         env:
           GH_TOKEN: ${{ github.token }}
+          TARGET_REF: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          gh workflow run release.yml --ref "${{ github.ref_name }}"
+          gh workflow run release.yml --ref "$TARGET_REF"
 
       - name: Summary
         env:
