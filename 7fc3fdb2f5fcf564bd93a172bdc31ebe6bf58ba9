@@ -1,0 +1,19 @@
+.github/workflows/probe-v3-chain.yml
+  s_9b4a247e6dcf40::t_9fcd6e8db670e8 41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "7fc3fdb2f5fcf564bd93a172bdc31ebe6bf58ba9",
+  "prompts": {},
+  "sessions": {
+    "s_9b4a247e6dcf40": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e4f85a7e-10dc-4755-81e6-066d9991c318",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
