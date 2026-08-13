@@ -1,0 +1,24 @@
+.github/workflows/release.yml
+  s_9b4a247e6dcf40::t_928dcdef17c03a 21-30
+  s_9b4a247e6dcf40::t_84fda4f65e1a31 85-88
+  s_9b4a247e6dcf40::t_6a8d6a346fe1b3 59-63
+  s_9b4a247e6dcf40::t_8618d0801cfbba 34-36
+.github/workflows/bump_version.yml
+  s_9b4a247e6dcf40::t_8de8ad03dbacd1 2-18,28-35,38-43,45,86-196
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "d39f0562aba9a8e03b91b86a8d905edc9f2eb7dc",
+  "prompts": {},
+  "sessions": {
+    "s_9b4a247e6dcf40": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e4f85a7e-10dc-4755-81e6-066d9991c318",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
